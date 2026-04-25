@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+uploads/
+
+outputs/*
+!outputs/.gitkeep
+
+reference_images/*
+!reference_images/README.md

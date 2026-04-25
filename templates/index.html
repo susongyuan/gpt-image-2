@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gpt-image-2 Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ asset_version }}" />
+  </head>
+  <body>
+    <div class="app-layout">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <h1>gpt-image-2</h1>
+          <span id="statusPill" class="status-pill">Idle</span>
+        </div>
+        <button id="newChat" class="primary-button" type="button" data-i18n="newChat">New chat</button>
+        <div class="sidebar-row">
+          <span data-i18n="history">History</span>
+          <button id="clearHistory" class="text-button" type="button" data-i18n="clear">Clear</button>
+        </div>
+        <nav id="historyList" class="history-list" aria-label="Conversation history"></nav>
+      </aside>
+
+      <main class="chat-shell">
+        <header class="chat-header">
+          <div>
+            <h2 id="conversationTitle">New generation</h2>
+            <p id="conversationMeta" data-i18n="chatSubtitle">Prompt, images, and documents can be combined in one request.</p>
+          </div>
+        </header>
+
+        <section id="messageList" class="message-list" aria-live="polite"></section>
+
+        <form id="generateForm" class="composer">
+          <textarea
+            id="prompt"
+            name="prompt"
+            rows="4"
+            data-i18n-placeholder="promptPlaceholder"
+            placeholder="Ask for the image you want to create."
+          ></textarea>
+
+          <div class="attachment-row">
+            <label class="upload-button">
+              <span data-i18n="images">Images</span>
+              <input id="images" name="images" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+            </label>
+            <label class="upload-button">
+              <span data-i18n="documents">Documents</span>
+              <input
+                id="documents"
+                name="documents"
+                type="file"
+                accept=".txt,.md,.csv,.json,.pdf,.docx"
+                multiple
+              />
+            </label>
+            <button class="text-button" id="loadExample" type="button" data-i18n="example">Example</button>
+            <button class="send-button" type="submit" data-i18n="generate">Generate</button>
+          </div>
+
+          <div class="file-list" id="imageList"></div>
+          <div class="file-list" id="documentList"></div>
+        </form>
+      </main>
+
+      <aside class="settings-panel">
+        <div class="settings-header">
+          <h2 data-i18n="settings">Settings</h2>
+        </div>
+
+        <div class="field-grid">
+          <label>
+            <span data-i18n="language">Language</span>
+            <select id="uiLanguage">
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="font">Font</span>
+            <select id="uiFont">
+              <option value="system">System</option>
+              <option value="chinese">Chinese UI</option>
+              <option value="english">English UI</option>
+              <option value="serif">Serif</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          <span data-i18n="baseUrl">Base URL</span>
+          <input name="base_url" form="generateForm" value="{{ default_base_url }}" placeholder="https://api.openai.com/v1" />
+        </label>
+        <label>
+          <span data-i18n="apiKey">API Key</span>
+          <input name="api_key" form="generateForm" type="password" autocomplete="off" data-i18n-placeholder="apiKeyPlaceholder" placeholder="Use .env if empty" />
+        </label>
+        <label>
+          <span data-i18n="model">Model</span>
+          <input name="model" form="generateForm" value="{{ default_model }}" />
+        </label>
+
+        <div class="field-grid">
+          <label>
+              <span data-i18n="size">Size</span>
+            <select name="size" form="generateForm">
+              <option>1024x1024</option>
+              <option>1792x1024</option>
+              <option>1024x1792</option>
+              <option>2048x2048</option>
+              <option>3840x2160</option>
+              <option>auto</option>
+            </select>
+          </label>
+          <label>
+              <span data-i18n="quality">Quality</span>
+            <select name="quality" form="generateForm">
+              <option value="">Default</option>
+              <option>auto</option>
+              <option>low</option>
+              <option>medium</option>
+              <option selected>high</option>
+            </select>
+          </label>
+          <label>
+              <span data-i18n="format">Format</span>
+            <select name="format" form="generateForm">
+              <option value="">Default</option>
+              <option selected>png</option>
+              <option>jpeg</option>
+              <option>webp</option>
+            </select>
+          </label>
+          <label>
+              <span data-i18n="count">Count</span>
+            <input name="n" form="generateForm" type="number" min="1" max="10" value="1" />
+          </label>
+          <label>
+              <span data-i18n="background">Background</span>
+            <select name="background" form="generateForm">
+              <option value="">Default</option>
+              <option>auto</option>
+              <option>opaque</option>
+            </select>
+          </label>
+          <label>
+              <span data-i18n="moderation">Moderation</span>
+            <select name="moderation" form="generateForm">
+              <option value="">Default</option>
+              <option>auto</option>
+              <option>low</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="check-row">
+          <input name="no_proxy" form="generateForm" type="checkbox" />
+          <span data-i18n="disableProxy">Disable proxy</span>
+        </label>
+
+        <pre id="logOutput" class="log-output"></pre>
+      </aside>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ asset_version }}"></script>
+  </body>
+</html>
