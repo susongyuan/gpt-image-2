@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  --bg: #f5f6f3;
+  --bg: #f3f5f2;
   --surface: #ffffff;
   --surface-soft: #fafbf8;
   --ink: #161819;
@@ -68,6 +68,7 @@ button {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
+  box-shadow: 8px 0 22px rgba(24, 29, 31, 0.03);
   padding: 16px;
 }
 
@@ -130,6 +131,7 @@ h2 {
   border-radius: 7px;
   min-height: 38px;
   font-weight: 720;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .primary-button,
@@ -141,6 +143,7 @@ h2 {
 .primary-button:hover,
 .send-button:hover {
   background: var(--accent-strong);
+  box-shadow: 0 8px 18px rgba(14, 81, 70, 0.18);
 }
 
 .primary-button {
@@ -161,8 +164,15 @@ h2 {
 .text-button,
 .upload-button {
   background: #eef2ef;
+  border: 1px solid transparent;
   color: var(--ink);
   padding: 0 12px;
+}
+
+.text-button:hover,
+.upload-button:hover {
+  border-color: #cbd6ce;
+  background: #e7ede9;
 }
 
 .upload-button {
@@ -243,6 +253,7 @@ h2 {
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.82);
   padding: 18px 22px;
+  backdrop-filter: blur(12px);
 }
 
 .chat-header p {
@@ -257,7 +268,10 @@ h2 {
   gap: 14px;
   min-height: 0;
   overflow: auto;
-  padding: 22px;
+  padding: 24px 22px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.52)),
+    var(--bg);
 }
 
 .empty-state {
@@ -323,7 +337,7 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
-  padding: 12px;
+  padding: 14px;
   box-shadow: var(--shadow);
 }
 
@@ -422,10 +436,30 @@ h2 {
 
 .composer {
   display: grid;
-  gap: 10px;
+  gap: 9px;
   border-top: 1px solid var(--line);
   background: var(--surface);
-  padding: 14px 18px 18px;
+  padding: 12px 18px 18px;
+  box-shadow: 0 -8px 24px rgba(24, 29, 31, 0.04);
+}
+
+.composer.is-dragging {
+  background: #eef8f4;
+}
+
+.paste-hint {
+  border: 1px dashed #c4d0c7;
+  border-radius: 7px;
+  background: #f7faf7;
+  color: var(--muted);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.composer.is-dragging .paste-hint {
+  border-color: var(--accent);
+  background: #e4f4ee;
+  color: var(--accent-strong);
 }
 
 textarea,
@@ -443,8 +477,10 @@ select {
 
 textarea {
   resize: vertical;
-  min-height: 98px;
+  min-height: 88px;
   max-height: 260px;
+  border-radius: 8px;
+  line-height: 1.55;
 }
 
 textarea:focus,
@@ -469,10 +505,13 @@ select:focus {
 }
 
 .file-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 4px 9px;
+  padding: 4px 5px 4px 9px;
   background: var(--surface-soft);
   color: var(--muted);
   font-size: 12px;
@@ -481,10 +520,30 @@ select:focus {
   white-space: nowrap;
 }
 
+.file-remove {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: #e5ebe7;
+  color: #58615f;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0;
+}
+
+.file-remove:hover {
+  background: #d8e2dc;
+  color: var(--ink);
+}
+
 .settings-panel {
   min-height: 0;
   overflow: auto;
   border-left: 1px solid var(--line);
+  box-shadow: -8px 0 22px rgba(24, 29, 31, 0.03);
   padding: 16px;
 }
 

@@ -19,6 +19,11 @@ const newChatButton = document.querySelector("#newChat");
 const clearHistoryButton = document.querySelector("#clearHistory");
 const uiLanguage = document.querySelector("#uiLanguage");
 const uiFont = document.querySelector("#uiFont");
+const pasteHint = document.querySelector("#pasteHint");
+
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
+const DOCUMENT_EXTENSIONS = new Set(["txt", "md", "csv", "json", "pdf", "docx"]);
+const IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const translations = {
   en: {
@@ -57,6 +62,9 @@ const translations = {
     imagesUnit: "image(s)",
     open: "Open",
     download: "Download",
+    pasteHint: "Paste screenshots or files with Ctrl+V, or drag files into this area.",
+    pastedFiles: "Added files",
+    unsupportedFiles: "Unsupported files",
     enterPrompt: "Enter a prompt or upload at least one document.",
     failed: "Request failed",
   },
@@ -96,6 +104,9 @@ const translations = {
     imagesUnit: "张图片",
     open: "打开",
     download: "下载",
+    pasteHint: "可用 Ctrl+V 粘贴截图或文件，也可以把文件拖到这里。",
+    pastedFiles: "已添加文件",
+    unsupportedFiles: "不支持的文件",
     enterPrompt: "请输入提示词，或至少上传一个可读取的文档。",
     failed: "请求失败",
   },
@@ -106,6 +117,8 @@ let activeConversationId = conversations[0]?.id || null;
 if (!activeConversationId) {
   activeConversationId = createConversation(false).id;
 }
+let queuedImages = [];
+let queuedDocuments = [];
 
 function currentLanguage() {
   return uiLanguage?.value || "en";
@@ -213,14 +226,109 @@ function setStatus(text, state = "") {
   statusPill.className = `status-pill ${state}`.trim();
 }
 
-function listFiles(input, target) {
+function fileKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function fileExtension(file) {
+  const name = file.name || "";
+  return name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+}
+
+function classifyFile(file) {
+  const extension = fileExtension(file);
+  if (IMAGE_EXTENSIONS.has(extension) || IMAGE_MIME_TYPES.has(file.type)) {
+    return "image";
+  }
+  if (DOCUMENT_EXTENSIONS.has(extension)) {
+    return "document";
+  }
+  return "unsupported";
+}
+
+function uniqueAppend(existing, incoming) {
+  const seen = new Set(existing.map(fileKey));
+  incoming.forEach((file) => {
+    const key = fileKey(file);
+    if (!seen.has(key)) {
+      existing.push(file);
+      seen.add(key);
+    }
+  });
+}
+
+function syncInputFiles(input, files) {
+  const transfer = new DataTransfer();
+  files.forEach((file) => transfer.items.add(file));
+  input.files = transfer.files;
+}
+
+function addFiles(files) {
+  const images = [];
+  const documents = [];
+  const unsupported = [];
+
+  Array.from(files).forEach((file) => {
+    const kind = classifyFile(file);
+    if (kind === "image") {
+      images.push(file);
+    } else if (kind === "document") {
+      documents.push(file);
+    } else {
+      unsupported.push(file.name || "unnamed");
+    }
+  });
+
+  uniqueAppend(queuedImages, images);
+  uniqueAppend(queuedDocuments, documents);
+  syncInputFiles(imageInput, queuedImages);
+  syncInputFiles(documentInput, queuedDocuments);
+  renderFileLists();
+
+  const totalAdded = images.length + documents.length;
+  if (totalAdded || unsupported.length) {
+    const parts = [];
+    if (totalAdded) parts.push(`${t("pastedFiles")}: ${totalAdded}`);
+    if (unsupported.length) parts.push(`${t("unsupportedFiles")}: ${unsupported.join(", ")}`);
+    setLog(parts.join("\n"));
+  }
+}
+
+function removeQueuedFile(kind, key) {
+  if (kind === "image") {
+    queuedImages = queuedImages.filter((file) => fileKey(file) !== key);
+    syncInputFiles(imageInput, queuedImages);
+  } else {
+    queuedDocuments = queuedDocuments.filter((file) => fileKey(file) !== key);
+    syncInputFiles(documentInput, queuedDocuments);
+  }
+  renderFileLists();
+}
+
+function renderFileList(files, target, kind) {
   target.innerHTML = "";
-  Array.from(input.files).forEach((file) => {
+  files.forEach((file) => {
     const item = document.createElement("span");
     item.className = "file-token";
+    item.title = file.name;
     item.textContent = file.name;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "file-remove";
+    remove.dataset.kind = kind;
+    remove.dataset.key = fileKey(file);
+    remove.setAttribute("aria-label", `Remove ${file.name}`);
+    remove.textContent = "x";
+
+    item.appendChild(remove);
     target.appendChild(item);
   });
+}
+
+function renderFileLists() {
+  renderFileList(queuedImages, imageList, "image");
+  renderFileList(queuedDocuments, documentList, "document");
 }
 
 function setLog(message) {
@@ -429,14 +537,51 @@ function updateLastAssistant(message) {
 }
 
 function resetComposerFiles() {
-  imageInput.value = "";
-  documentInput.value = "";
-  imageList.innerHTML = "";
-  documentList.innerHTML = "";
+  queuedImages = [];
+  queuedDocuments = [];
+  syncInputFiles(imageInput, queuedImages);
+  syncInputFiles(documentInput, queuedDocuments);
+  renderFileLists();
 }
 
-imageInput.addEventListener("change", () => listFiles(imageInput, imageList));
-documentInput.addEventListener("change", () => listFiles(documentInput, documentList));
+imageInput.addEventListener("change", () => addFiles(imageInput.files));
+documentInput.addEventListener("change", () => addFiles(documentInput.files));
+
+imageList.addEventListener("click", (event) => {
+  const button = event.target.closest(".file-remove");
+  if (!button) return;
+  removeQueuedFile(button.dataset.kind, button.dataset.key);
+});
+
+documentList.addEventListener("click", (event) => {
+  const button = event.target.closest(".file-remove");
+  if (!button) return;
+  removeQueuedFile(button.dataset.kind, button.dataset.key);
+});
+
+document.addEventListener("paste", (event) => {
+  const files = event.clipboardData?.files || [];
+  if (!files.length) return;
+  event.preventDefault();
+  addFiles(files);
+});
+
+form.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  form.classList.add("is-dragging");
+});
+
+form.addEventListener("dragleave", (event) => {
+  if (!form.contains(event.relatedTarget)) {
+    form.classList.remove("is-dragging");
+  }
+});
+
+form.addEventListener("drop", (event) => {
+  event.preventDefault();
+  form.classList.remove("is-dragging");
+  addFiles(event.dataTransfer?.files || []);
+});
 
 formFields().forEach((field) => {
   field.addEventListener("input", saveSettings);
@@ -505,6 +650,7 @@ form.addEventListener("submit", async (event) => {
 
   const submitButton = form.querySelector("button[type='submit']");
   submitButton.disabled = true;
+  const formData = new FormData(form);
 
   appendMessage({
     role: "user",
@@ -516,9 +662,10 @@ form.addEventListener("submit", async (event) => {
     text: `${t("generating")}...`,
     pending: true,
   });
+  promptInput.value = "";
+  resetComposerFiles();
 
   try {
-    const formData = new FormData(form);
     const startedAt = performance.now();
     const response = await fetch("/api/generate", {
       method: "POST",

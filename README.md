@@ -84,6 +84,8 @@ The page supports:
 - Chat-style generation
 - Local conversation history
 - Enter-to-send and Shift+Enter for new lines
+- Immediate composer clearing after submit
+- File picker, drag-and-drop, and Ctrl+V paste uploads
 - Chinese and English interface language
 - Selectable interface fonts
 - Result previews preserve each generated image's aspect ratio
