@@ -18,7 +18,7 @@ const imageList = document.querySelector("#imageList");
 const documentList = document.querySelector("#documentList");
 const loadExample = document.querySelector("#loadExample");
 const promptInput = document.querySelector("#prompt");
-const stopGenerationButton = document.querySelector("#stopGeneration");
+let stopGenerationButton = document.querySelector("#stopGeneration");
 const newChatButton = document.querySelector("#newChat");
 const clearHistoryButton = document.querySelector("#clearHistory");
 const uiLanguage = document.querySelector("#uiLanguage");
@@ -866,11 +866,39 @@ function buildFormData(prompt, imageFiles, documentFiles) {
   return formData;
 }
 
+function stopCurrentGeneration() {
+  if (!currentAbortController) return;
+  setStatus(t("stopping"), "busy");
+  setLog(t("stopping"));
+  currentAbortController.abort();
+}
+
+function ensureStopButton() {
+  if (stopGenerationButton) return stopGenerationButton;
+
+  const submitButton = form.querySelector("button[type='submit']");
+  if (!submitButton) return null;
+
+  stopGenerationButton = document.createElement("button");
+  stopGenerationButton.className = "stop-button";
+  stopGenerationButton.id = "stopGeneration";
+  stopGenerationButton.type = "button";
+  stopGenerationButton.dataset.i18n = "stop";
+  stopGenerationButton.textContent = t("stop");
+  stopGenerationButton.disabled = true;
+  stopGenerationButton.onclick = stopCurrentGeneration;
+  submitButton.insertAdjacentElement("afterend", stopGenerationButton);
+
+  return stopGenerationButton;
+}
+
 function setGeneratingUi(isGenerating) {
   const submitButton = form.querySelector("button[type='submit']");
   submitButton.disabled = isGenerating;
-  if (stopGenerationButton) {
-    stopGenerationButton.disabled = !isGenerating;
+  const stopButton = ensureStopButton();
+  if (stopButton) {
+    stopButton.hidden = !isGenerating;
+    stopButton.disabled = !isGenerating;
   }
 }
 
@@ -1181,13 +1209,10 @@ loadExample.addEventListener("click", () => {
       : "Create a clean product advertisement image for the uploaded product. Use the document as campaign context. Keep the composition practical, high-converting, and suitable for an ecommerce listing.";
 });
 
+ensureStopButton();
 if (stopGenerationButton) {
-  stopGenerationButton.addEventListener("click", () => {
-    if (!currentAbortController) return;
-    setStatus(t("stopping"), "busy");
-    setLog(t("stopping"));
-    currentAbortController.abort();
-  });
+  stopGenerationButton.hidden = true;
+  stopGenerationButton.onclick = stopCurrentGeneration;
 }
 
 form.addEventListener("submit", async (event) => {

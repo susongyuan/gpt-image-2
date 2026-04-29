@@ -1,6 +1,6 @@
 # gpt-image-2 Image Generation CLI
 
-Current version: `v0.3.1`
+Current version: `v0.3.2`
 
 A small Python command-line tool for generating images with a GPT Image-compatible API.
 
@@ -128,6 +128,11 @@ Connection settings are preserved locally for convenience. The API key is kept i
 Uploaded images and documents used by new web-chat messages are stored in the browser's IndexedDB so `Resend` and inline `Save and send` can reuse the original attachments. Older history entries created before `v0.3.0` only contain attachment names and cannot recover the original uploaded file blobs.
 
 ## Version History
+
+### v0.3.2
+
+- Made the stop button self-heal in the browser when an older cached template does not include it.
+- Kept the stop button hidden while idle and visible only during active generation.
 
 ### v0.3.1
 
