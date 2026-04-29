@@ -222,22 +222,52 @@ h2 {
   overflow: auto;
 }
 
-.history-item {
+.history-entry {
   display: grid;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 4px;
+  align-items: stretch;
   width: 100%;
   border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
+  padding: 3px;
+}
+
+.history-entry:hover,
+.history-entry.active {
+  border-color: var(--line);
+  background: var(--surface-soft);
+}
+
+.history-item {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--ink);
-  padding: 9px;
+  padding: 6px;
   text-align: left;
 }
 
-.history-item:hover,
-.history-item.active {
-  border-color: var(--line);
-  background: var(--surface-soft);
+.history-delete {
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.history-delete:hover {
+  border-color: #e3b5b5;
+  background: #fff5f5;
+  color: #9f2d2d;
 }
 
 .history-item strong,
@@ -682,8 +712,8 @@ label {
     overflow-x: auto;
   }
 
-  .history-item {
-    min-width: 190px;
+  .history-entry {
+    min-width: 224px;
   }
 
   .message-list {

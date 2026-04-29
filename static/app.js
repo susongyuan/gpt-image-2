@@ -78,6 +78,8 @@ const translations = {
     stop: "Stop",
     stopping: "Stopping...",
     stopped: "Stopped",
+    deleteConversation: "Delete conversation",
+    deletedConversation: "Deleted conversation",
     contextText: "context chars",
     contextImages: "context image(s)",
     batchMode: "batch mode",
@@ -140,6 +142,8 @@ const translations = {
     stop: "停止",
     stopping: "正在停止...",
     stopped: "已停止",
+    deleteConversation: "删除会话",
+    deletedConversation: "已删除会话",
     contextText: "上下文字数",
     contextImages: "上下文图片",
     batchMode: "批量模式",
@@ -530,9 +534,12 @@ function applyFont() {
 function renderHistory() {
   historyList.innerHTML = "";
   conversations.forEach((conversation) => {
+    const item = document.createElement("div");
+    item.className = `history-entry ${conversation.id === activeConversationId ? "active" : ""}`;
+
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `history-item ${conversation.id === activeConversationId ? "active" : ""}`;
+    button.className = "history-item";
     button.dataset.id = conversation.id;
 
     const title = document.createElement("strong");
@@ -542,7 +549,17 @@ function renderHistory() {
     meta.textContent = `${conversation.messages.length} message(s)`;
 
     button.append(title, meta);
-    historyList.appendChild(button);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "history-delete";
+    remove.dataset.id = conversation.id;
+    remove.title = t("deleteConversation");
+    remove.setAttribute("aria-label", t("deleteConversation"));
+    remove.textContent = "x";
+
+    item.append(button, remove);
+    historyList.appendChild(item);
   });
 }
 
@@ -852,7 +869,9 @@ function buildFormData(prompt, imageFiles, documentFiles) {
 function setGeneratingUi(isGenerating) {
   const submitButton = form.querySelector("button[type='submit']");
   submitButton.disabled = isGenerating;
-  stopGenerationButton.disabled = !isGenerating;
+  if (stopGenerationButton) {
+    stopGenerationButton.disabled = !isGenerating;
+  }
 }
 
 function attachmentSummaryFor(imageNames, documentNames, contextText, contextImages, batchPerImage) {
@@ -1119,6 +1138,22 @@ promptInput.addEventListener("keydown", (event) => {
 });
 
 historyList.addEventListener("click", (event) => {
+  const deleteButton = event.target.closest(".history-delete");
+  if (deleteButton) {
+    const deleteId = deleteButton.dataset.id;
+    conversations = conversations.filter((conversation) => conversation.id !== deleteId);
+    if (!conversations.length) {
+      createConversation(false);
+    } else if (activeConversationId === deleteId) {
+      activeConversationId = conversations[0].id;
+    }
+    editingMessageId = null;
+    saveConversations();
+    render();
+    setLog(t("deletedConversation"));
+    return;
+  }
+
   const button = event.target.closest(".history-item");
   if (!button) return;
   activeConversationId = button.dataset.id;
@@ -1146,12 +1181,14 @@ loadExample.addEventListener("click", () => {
       : "Create a clean product advertisement image for the uploaded product. Use the document as campaign context. Keep the composition practical, high-converting, and suitable for an ecommerce listing.";
 });
 
-stopGenerationButton.addEventListener("click", () => {
-  if (!currentAbortController) return;
-  setStatus(t("stopping"), "busy");
-  setLog(t("stopping"));
-  currentAbortController.abort();
-});
+if (stopGenerationButton) {
+  stopGenerationButton.addEventListener("click", () => {
+    if (!currentAbortController) return;
+    setStatus(t("stopping"), "busy");
+    setLog(t("stopping"));
+    currentAbortController.abort();
+  });
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();

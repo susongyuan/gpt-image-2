@@ -1,6 +1,6 @@
 # gpt-image-2 Image Generation CLI
 
-Current version: `v0.3.0`
+Current version: `v0.3.1`
 
 A small Python command-line tool for generating images with a GPT Image-compatible API.
 
@@ -86,6 +86,7 @@ The page supports:
 - Chat-style generation
 - Local conversation history
 - Message actions for copying, deleting, inline editing, and resending previous prompts
+- Per-conversation delete buttons in the history sidebar
 - Stop button for canceling an in-progress browser request
 - Enter-to-send and Shift+Enter for new lines
 - Immediate composer clearing after submit
@@ -127,6 +128,11 @@ Connection settings are preserved locally for convenience. The API key is kept i
 Uploaded images and documents used by new web-chat messages are stored in the browser's IndexedDB so `Resend` and inline `Save and send` can reuse the original attachments. Older history entries created before `v0.3.0` only contain attachment names and cannot recover the original uploaded file blobs.
 
 ## Version History
+
+### v0.3.1
+
+- Fixed the web UI falling back to a normal page reload when an older template is paired with newer JavaScript.
+- Added a per-conversation delete button in the history sidebar.
 
 ### v0.3.0
 
