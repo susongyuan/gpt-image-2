@@ -1,6 +1,9 @@
 const STORAGE_KEY = "gpt-image-2-conversations-v1";
 const SETTINGS_KEY = "gpt-image-2-settings-v1";
-const SESSION_API_KEY = "gpt-image-2-session-api-key";
+const API_KEY_STORAGE_KEY = "gpt-image-2-api-key";
+const ATTACHMENT_DB_NAME = "gpt-image-2-attachments";
+const ATTACHMENT_DB_VERSION = 1;
+const ATTACHMENT_STORE_NAME = "files";
 
 const form = document.querySelector("#generateForm");
 const statusPill = document.querySelector("#statusPill");
@@ -15,6 +18,7 @@ const imageList = document.querySelector("#imageList");
 const documentList = document.querySelector("#documentList");
 const loadExample = document.querySelector("#loadExample");
 const promptInput = document.querySelector("#prompt");
+const stopGenerationButton = document.querySelector("#stopGeneration");
 const newChatButton = document.querySelector("#newChat");
 const clearHistoryButton = document.querySelector("#clearHistory");
 const uiLanguage = document.querySelector("#uiLanguage");
@@ -55,6 +59,10 @@ const translations = {
     background: "Background",
     moderation: "Moderation",
     disableProxy: "Disable proxy",
+    useContext: "Use chat context",
+    contextHint: "Sends recent chat text and recent generated images from this conversation as reference context.",
+    batchPerImage: "Batch each uploaded image",
+    batchHint: "When multiple images are uploaded, generate separately for each image instead of using all images as one reference set.",
     emptyTitle: "Start with a prompt",
     emptyText: "Upload images or documents, then generate from the composer.",
     requestStarted: "Request started...",
@@ -67,6 +75,22 @@ const translations = {
     unsupportedFiles: "Unsupported files",
     enterPrompt: "Enter a prompt or upload at least one document.",
     failed: "Request failed",
+    stop: "Stop",
+    stopping: "Stopping...",
+    stopped: "Stopped",
+    contextText: "context chars",
+    contextImages: "context image(s)",
+    batchMode: "batch mode",
+    deleteMessage: "Delete",
+    copyMessage: "Copy",
+    editMessage: "Edit",
+    resendMessage: "Send again",
+    saveAndSend: "Save and send",
+    cancelEdit: "Cancel",
+    copiedMessage: "Copied message",
+    deletedMessage: "Deleted message",
+    editingMessage: "Editing in message",
+    missingSavedFiles: "Saved attachments are not available. Please upload them again.",
   },
   zh: {
     idle: "空闲",
@@ -97,6 +121,10 @@ const translations = {
     background: "背景",
     moderation: "审核",
     disableProxy: "禁用代理",
+    useContext: "使用对话上下文",
+    contextHint: "自动携带当前对话最近文本和最近生成图片作为参考，不用反复上传上一张图。",
+    batchPerImage: "按每张上传图批量生成",
+    batchHint: "上传多张图片时，每张产品图独立请求一次，而不是把所有图片混在同一次参考图里。",
     emptyTitle: "从提示词开始",
     emptyText: "可以上传图片或文档，然后在输入框中生成。",
     requestStarted: "请求已开始...",
@@ -109,6 +137,22 @@ const translations = {
     unsupportedFiles: "不支持的文件",
     enterPrompt: "请输入提示词，或至少上传一个可读取的文档。",
     failed: "请求失败",
+    stop: "停止",
+    stopping: "正在停止...",
+    stopped: "已停止",
+    contextText: "上下文字数",
+    contextImages: "上下文图片",
+    batchMode: "批量模式",
+    deleteMessage: "删除",
+    copyMessage: "复制",
+    editMessage: "修改",
+    resendMessage: "重发",
+    saveAndSend: "保存发送",
+    cancelEdit: "取消",
+    copiedMessage: "已复制消息",
+    deletedMessage: "已删除消息",
+    editingMessage: "正在消息框内修改",
+    missingSavedFiles: "原来的附件读取不到了，请重新上传一次。",
   },
 };
 
@@ -119,6 +163,10 @@ if (!activeConversationId) {
 }
 let queuedImages = [];
 let queuedDocuments = [];
+let editingMessageId = null;
+let currentAbortController = null;
+let attachmentDbPromise = null;
+const attachmentCache = new Map();
 
 function currentLanguage() {
   return uiLanguage?.value || "en";
@@ -149,6 +197,84 @@ function saveConversations() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
 }
 
+function openAttachmentDb() {
+  if (!window.indexedDB) return Promise.resolve(null);
+  if (attachmentDbPromise) return attachmentDbPromise;
+
+  attachmentDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(ATTACHMENT_DB_NAME, ATTACHMENT_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(ATTACHMENT_STORE_NAME)) {
+        db.createObjectStore(ATTACHMENT_STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  }).catch(() => null);
+
+  return attachmentDbPromise;
+}
+
+async function saveAttachmentFiles(files, kind) {
+  const refs = Array.from(files).map((file) => {
+    const ref = {
+      id: uid(),
+      kind,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: file.lastModified,
+    };
+    attachmentCache.set(ref.id, file);
+    return { ref, file };
+  });
+
+  const db = await openAttachmentDb();
+  if (db && refs.length) {
+    await new Promise((resolve) => {
+      const transaction = db.transaction(ATTACHMENT_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(ATTACHMENT_STORE_NAME);
+      refs.forEach(({ ref, file }) => store.put({ ...ref, file }));
+      transaction.oncomplete = resolve;
+      transaction.onerror = resolve;
+      transaction.onabort = resolve;
+    });
+  }
+
+  return refs.map(({ ref }) => ref);
+}
+
+async function loadAttachmentFiles(refs = []) {
+  const files = [];
+  const missing = [];
+  const db = await openAttachmentDb();
+
+  for (const ref of refs) {
+    let file = attachmentCache.get(ref.id);
+    if (!file && db) {
+      const record = await new Promise((resolve) => {
+        const transaction = db.transaction(ATTACHMENT_STORE_NAME, "readonly");
+        const request = transaction.objectStore(ATTACHMENT_STORE_NAME).get(ref.id);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => resolve(null);
+      });
+      if (record?.file) {
+        file = record.file;
+        attachmentCache.set(ref.id, file);
+      }
+    }
+
+    if (file) {
+      files.push(file);
+    } else {
+      missing.push(ref);
+    }
+  }
+
+  return { files, missing };
+}
+
 function formFields() {
   return Array.from(document.querySelectorAll("[form='generateForm'], #generateForm [name]")).filter(
     (field) => field.name && field.type !== "file"
@@ -159,7 +285,7 @@ function saveSettings() {
   const settings = {};
   formFields().forEach((field) => {
     if (field.name === "api_key") {
-      sessionStorage.setItem(SESSION_API_KEY, field.value || "");
+      localStorage.setItem(API_KEY_STORAGE_KEY, field.value || "");
       return;
     }
     settings[field.name] = field.type === "checkbox" ? field.checked : field.value;
@@ -179,7 +305,7 @@ function restoreSettings() {
 
   formFields().forEach((field) => {
     if (field.name === "api_key") {
-      field.value = sessionStorage.getItem(SESSION_API_KEY) || "";
+      field.value = localStorage.getItem(API_KEY_STORAGE_KEY) || sessionStorage.getItem("gpt-image-2-session-api-key") || "";
       return;
     }
     if (!(field.name in settings)) return;
@@ -339,6 +465,50 @@ function fileNames(input) {
   return Array.from(input.files).map((file) => file.name);
 }
 
+function trimForContext(text, limit = 700) {
+  const cleaned = String(text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.length > limit ? `${cleaned.slice(0, limit)}...` : cleaned;
+}
+
+function buildConversationContext() {
+  const conversation = activeConversation();
+  if (!conversation?.messages?.length) return "";
+
+  const lines = conversation.messages
+    .filter((message) => !message.pending)
+    .slice(-8)
+    .map((message) => {
+      const role = message.role === "user" ? "User" : "Assistant";
+      const parts = [];
+      const text = trimForContext(message.text);
+      if (text) parts.push(text);
+      if (message.attachments?.length) parts.push(`Attachments: ${message.attachments.slice(0, 6).join(", ")}`);
+      if (message.images?.length) {
+        parts.push(`Generated images: ${message.images.map((image) => image.filename).slice(0, 4).join(", ")}`);
+      }
+      return parts.length ? `${role}: ${parts.join(" | ")}` : "";
+    })
+    .filter(Boolean);
+
+  return lines.join("\n");
+}
+
+function previousGeneratedImageUrls(maxCount = 4) {
+  const conversation = activeConversation();
+  if (!conversation?.messages?.length) return [];
+
+  const urls = [];
+  for (let index = conversation.messages.length - 1; index >= 0 && urls.length < maxCount; index -= 1) {
+    const message = conversation.messages[index];
+    if (message.role !== "assistant" || message.pending || !message.images?.length) continue;
+    message.images.forEach((image) => {
+      if (urls.length < maxCount && image.url) urls.push(image.url);
+    });
+  }
+  return urls;
+}
+
 function applyLanguage() {
   document.documentElement.lang = currentLanguage() === "zh" ? "zh-CN" : "en";
   document.querySelectorAll("[data-i18n]").forEach((node) => {
@@ -379,6 +549,8 @@ function renderHistory() {
 function renderMessage(message) {
   const article = document.createElement("article");
   article.className = `message ${message.role}`;
+  article.dataset.messageId = message.id;
+  const isEditing = message.role === "user" && editingMessageId === message.id;
 
   const avatar = document.createElement("div");
   avatar.className = "avatar";
@@ -387,11 +559,20 @@ function renderMessage(message) {
   const bubble = document.createElement("div");
   bubble.className = "bubble";
 
-  if (message.text) {
-    const text = document.createElement("div");
-    text.className = "message-text";
-    text.textContent = message.text;
-    bubble.appendChild(text);
+  if (message.text || isEditing) {
+    if (isEditing) {
+      const editor = document.createElement("textarea");
+      editor.className = "message-edit-input";
+      editor.dataset.editInput = message.id;
+      editor.value = message.text || "";
+      editor.rows = Math.min(14, Math.max(4, editor.value.split("\n").length + 1));
+      bubble.appendChild(editor);
+    } else {
+      const text = document.createElement("div");
+      text.className = "message-text";
+      text.textContent = message.text;
+      bubble.appendChild(text);
+    }
   }
 
   if (message.attachments?.length) {
@@ -466,6 +647,42 @@ function renderMessage(message) {
     bubble.appendChild(meta);
   }
 
+  if (!message.pending && (message.text || isEditing)) {
+    const actions = document.createElement("div");
+    actions.className = "message-actions";
+
+    const actionItems =
+      isEditing
+        ? [
+            ["save-send", t("saveAndSend")],
+            ["cancel-edit", t("cancelEdit")],
+            ["delete", t("deleteMessage")],
+          ]
+        : message.role === "user"
+        ? [
+            ["copy", t("copyMessage")],
+            ["edit", t("editMessage")],
+            ["resend", t("resendMessage")],
+            ["delete", t("deleteMessage")],
+          ]
+        : [
+            ["copy", t("copyMessage")],
+            ["delete", t("deleteMessage")],
+          ];
+
+    actionItems.forEach(([action, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `message-action message-action-${action}`;
+      button.dataset.action = action;
+      button.dataset.messageId = message.id;
+      button.textContent = label;
+      actions.appendChild(button);
+    });
+
+    bubble.appendChild(actions);
+  }
+
   article.append(avatar, bubble);
   return article;
 }
@@ -499,7 +716,8 @@ function render() {
 
 function appendMessage(message) {
   const conversation = activeConversation();
-  conversation.messages.push({ id: uid(), createdAt: nowIso(), ...message });
+  const savedMessage = { id: uid(), createdAt: nowIso(), ...message };
+  conversation.messages.push(savedMessage);
   conversation.updatedAt = nowIso();
   if (conversation.messages.length === 1 && message.role === "user") {
     conversation.title = titleFromPrompt(message.text || "");
@@ -509,6 +727,7 @@ function appendMessage(message) {
   activeConversationId = conversation.id;
   saveConversations();
   render();
+  return savedMessage;
 }
 
 function updateLastAssistant(message) {
@@ -536,6 +755,275 @@ function updateLastAssistant(message) {
   render();
 }
 
+function findActiveMessage(messageId) {
+  const conversation = activeConversation();
+  if (!conversation) return { conversation: null, message: null, index: -1 };
+  const index = conversation.messages.findIndex((message) => message.id === messageId);
+  return {
+    conversation,
+    message: index >= 0 ? conversation.messages[index] : null,
+    index,
+  };
+}
+
+function refreshConversationTitle(conversation) {
+  const firstUserMessage = conversation.messages.find((message) => message.role === "user" && message.text);
+  conversation.title = firstUserMessage ? titleFromPrompt(firstUserMessage.text) : t("newGeneration");
+}
+
+function deleteMessage(messageId) {
+  const { conversation, index } = findActiveMessage(messageId);
+  if (!conversation || index < 0) return;
+  conversation.messages.splice(index, 1);
+  refreshConversationTitle(conversation);
+  conversation.updatedAt = nowIso();
+  saveConversations();
+  render();
+  setLog(t("deletedMessage"));
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+async function copyMessageText(messageId) {
+  const { message } = findActiveMessage(messageId);
+  if (!message?.text) return;
+  await copyTextToClipboard(message.text);
+  setLog(t("copiedMessage"));
+}
+
+function loadMessageForEdit(messageId) {
+  const { message } = findActiveMessage(messageId);
+  if (!message?.text) return;
+  editingMessageId = messageId;
+  render();
+  const editor = messageList.querySelector(`[data-edit-input="${CSS.escape(messageId)}"]`);
+  if (editor) {
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+  }
+  setLog(t("editingMessage"));
+}
+
+async function filesForMessage(message) {
+  const imageRefs = message.fileRefs?.images || [];
+  const documentRefs = message.fileRefs?.documents || [];
+  const [imageResult, documentResult] = await Promise.all([
+    loadAttachmentFiles(imageRefs),
+    loadAttachmentFiles(documentRefs),
+  ]);
+  return {
+    imageFiles: imageResult.files,
+    documentFiles: documentResult.files,
+    missing: [...imageResult.missing, ...documentResult.missing],
+  };
+}
+
+function buildFormData(prompt, imageFiles, documentFiles) {
+  const formData = new FormData();
+  formFields().forEach((field) => {
+    if (field.name === "prompt") {
+      formData.append("prompt", prompt);
+    } else if (field.type === "checkbox") {
+      if (field.checked) formData.append(field.name, field.value || "on");
+    } else {
+      formData.append(field.name, field.value || "");
+    }
+  });
+  imageFiles.forEach((file) => formData.append("images", file, file.name));
+  documentFiles.forEach((file) => formData.append("documents", file, file.name));
+  return formData;
+}
+
+function setGeneratingUi(isGenerating) {
+  const submitButton = form.querySelector("button[type='submit']");
+  submitButton.disabled = isGenerating;
+  stopGenerationButton.disabled = !isGenerating;
+}
+
+function attachmentSummaryFor(imageNames, documentNames, contextText, contextImages, batchPerImage) {
+  const summary = [
+    ...imageNames.map((name) => `Image: ${name}`),
+    ...documentNames.map((name) => `Document: ${name}`),
+  ];
+  if (contextText) summary.push(`Context: ${contextText.length} chars`);
+  if (contextImages.length) summary.push(`Previous images: ${contextImages.length}`);
+  if (batchPerImage) summary.push(`Batch: ${imageNames.length} image(s)`);
+  return summary;
+}
+
+async function submitGeneration({ prompt, imageFiles, documentFiles, existingMessageId = null }) {
+  const imageNames = imageFiles.map((file) => file.name);
+  const documentNames = documentFiles.map((file) => file.name);
+  const existingLookup = existingMessageId ? findActiveMessage(existingMessageId) : null;
+
+  if (!prompt && documentNames.length === 0) {
+    setStatus(t("error"), "error");
+    setLog(t("enterPrompt"));
+    return;
+  }
+
+  if (currentAbortController) return;
+  if (existingMessageId && !existingLookup?.message) return;
+
+  saveSettings();
+  setStatus(t("generating"), "busy");
+  setLog(t("requestStarted"));
+  setGeneratingUi(true);
+
+  if (existingLookup?.message) {
+    existingLookup.message.text =
+      prompt || (currentLanguage() === "zh" ? "根据上传文档生成图片。" : "Generate from uploaded document context.");
+    existingLookup.conversation.updatedAt = nowIso();
+    refreshConversationTitle(existingLookup.conversation);
+    editingMessageId = null;
+    saveConversations();
+    render();
+  }
+
+  const formData = buildFormData(prompt, imageFiles, documentFiles);
+  const useContext = formData.get("use_context") === "on";
+  const batchPerImage = formData.get("batch_per_image") === "on" && imageNames.length > 1;
+  const contextText = useContext ? buildConversationContext() : "";
+  const contextImages = useContext && !batchPerImage ? previousGeneratedImageUrls() : [];
+  if (useContext) {
+    formData.append("conversation_context", contextText);
+    formData.append("previous_image_urls", JSON.stringify(contextImages));
+  }
+
+  const attachmentSummary = attachmentSummaryFor(imageNames, documentNames, contextText, contextImages, batchPerImage);
+
+  if (existingMessageId) {
+    existingLookup.message.attachments = attachmentSummary;
+    existingLookup.conversation.updatedAt = nowIso();
+    saveConversations();
+    render();
+  } else {
+    const [imageRefs, documentRefs] = await Promise.all([
+      saveAttachmentFiles(imageFiles, "image"),
+      saveAttachmentFiles(documentFiles, "document"),
+    ]);
+    appendMessage({
+      role: "user",
+      text: prompt || (currentLanguage() === "zh" ? "根据上传文档生成图片。" : "Generate from uploaded document context."),
+      attachments: attachmentSummary,
+      fileRefs: {
+        images: imageRefs,
+        documents: documentRefs,
+      },
+    });
+    promptInput.value = "";
+    resetComposerFiles();
+  }
+
+  appendMessage({
+    role: "assistant",
+    text: `${t("generating")}...`,
+    pending: true,
+  });
+
+  currentAbortController = new AbortController();
+  try {
+    const startedAt = performance.now();
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      body: formData,
+      signal: currentAbortController.signal,
+    });
+    const payload = await response.json();
+    const elapsed = ((performance.now() - startedAt) / 1000).toFixed(1);
+
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || `HTTP ${response.status}`);
+    }
+
+    updateLastAssistant({
+      text: `${t("generated")} ${payload.images.length} ${t("imagesUnit")}.`,
+      images: payload.images,
+      meta: [
+        `${elapsed}s`,
+        `${payload.prompt_chars} prompt chars`,
+        `${payload.documents.length} document(s)`,
+        `${payload.context_chars || 0} ${t("contextText")}`,
+        `${payload.context_images || 0} ${t("contextImages")}`,
+        payload.batch ? t("batchMode") : "",
+      ].filter(Boolean),
+    });
+
+    setLog(
+      [
+        `Finished in ${elapsed}s`,
+        `Prompt characters: ${payload.prompt_chars}`,
+        `Documents: ${payload.documents.length}`,
+        `Context characters: ${payload.context_chars || 0}`,
+        `Context images: ${payload.context_images || 0}`,
+        `Batch mode: ${payload.batch ? "yes" : "no"}`,
+        payload.batch_items?.length
+          ? `Batch items: ${payload.batch_items.map((item) => `${item.source} -> ${item.images}`).join(", ")}`
+          : "",
+        `Images: ${payload.images.length}`,
+      ].filter(Boolean).join("\n")
+    );
+    setStatus(t("done"), "done");
+  } catch (error) {
+    const wasAborted = error.name === "AbortError";
+    updateLastAssistant({
+      text: wasAborted ? t("stopped") : error.message,
+      meta: [wasAborted ? t("stopped") : t("failed")],
+    });
+    setStatus(wasAborted ? t("idle") : t("error"), wasAborted ? "" : "error");
+    setLog(wasAborted ? t("stopped") : error.message);
+  } finally {
+    currentAbortController = null;
+    setGeneratingUi(false);
+  }
+}
+
+async function resendMessage(messageId) {
+  const { message } = findActiveMessage(messageId);
+  if (!message?.text || currentAbortController) return;
+  const { imageFiles, documentFiles, missing } = await filesForMessage(message);
+  if (missing.length) {
+    setStatus(t("error"), "error");
+    setLog(t("missingSavedFiles"));
+    return;
+  }
+  await submitGeneration({ prompt: message.text, imageFiles, documentFiles });
+}
+
+async function saveEditedMessageAndSend(messageId) {
+  const { message } = findActiveMessage(messageId);
+  const editor = messageList.querySelector(`[data-edit-input="${CSS.escape(messageId)}"]`);
+  if (!message || !editor || currentAbortController) return;
+
+  const { imageFiles, documentFiles, missing } = await filesForMessage(message);
+  if (missing.length) {
+    setStatus(t("error"), "error");
+    setLog(t("missingSavedFiles"));
+    return;
+  }
+  await submitGeneration({
+    prompt: editor.value.trim(),
+    imageFiles,
+    documentFiles,
+    existingMessageId: messageId,
+  });
+}
+
 function resetComposerFiles() {
   queuedImages = [];
   queuedDocuments = [];
@@ -557,6 +1045,33 @@ documentList.addEventListener("click", (event) => {
   const button = event.target.closest(".file-remove");
   if (!button) return;
   removeQueuedFile(button.dataset.kind, button.dataset.key);
+});
+
+messageList.addEventListener("click", async (event) => {
+  const button = event.target.closest(".message-action");
+  if (!button) return;
+
+  const { action, messageId } = button.dataset;
+  if (!messageId) return;
+
+  if (action === "delete") {
+    deleteMessage(messageId);
+  } else if (action === "copy") {
+    try {
+      await copyMessageText(messageId);
+    } catch (error) {
+      setLog(error.message);
+    }
+  } else if (action === "edit") {
+    loadMessageForEdit(messageId);
+  } else if (action === "resend") {
+    await resendMessage(messageId);
+  } else if (action === "save-send") {
+    await saveEditedMessageAndSend(messageId);
+  } else if (action === "cancel-edit") {
+    editingMessageId = null;
+    render();
+  }
 });
 
 document.addEventListener("paste", (event) => {
@@ -631,84 +1146,20 @@ loadExample.addEventListener("click", () => {
       : "Create a clean product advertisement image for the uploaded product. Use the document as campaign context. Keep the composition practical, high-converting, and suitable for an ecommerce listing.";
 });
 
+stopGenerationButton.addEventListener("click", () => {
+  if (!currentAbortController) return;
+  setStatus(t("stopping"), "busy");
+  setLog(t("stopping"));
+  currentAbortController.abort();
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
-  saveSettings();
-
-  const prompt = promptInput.value.trim();
-  const imageNames = fileNames(imageInput);
-  const documentNames = fileNames(documentInput);
-
-  if (!prompt && documentNames.length === 0) {
-    setStatus(t("error"), "error");
-    setLog(t("enterPrompt"));
-    return;
-  }
-
-  setStatus(t("generating"), "busy");
-  setLog(t("requestStarted"));
-
-  const submitButton = form.querySelector("button[type='submit']");
-  submitButton.disabled = true;
-  const formData = new FormData(form);
-
-  appendMessage({
-    role: "user",
-    text: prompt || (currentLanguage() === "zh" ? "根据上传文档生成图片。" : "Generate from uploaded document context."),
-    attachments: [...imageNames.map((name) => `Image: ${name}`), ...documentNames.map((name) => `Document: ${name}`)],
+  await submitGeneration({
+    prompt: promptInput.value.trim(),
+    imageFiles: Array.from(imageInput.files),
+    documentFiles: Array.from(documentInput.files),
   });
-  appendMessage({
-    role: "assistant",
-    text: `${t("generating")}...`,
-    pending: true,
-  });
-  promptInput.value = "";
-  resetComposerFiles();
-
-  try {
-    const startedAt = performance.now();
-    const response = await fetch("/api/generate", {
-      method: "POST",
-      body: formData,
-    });
-    const payload = await response.json();
-    const elapsed = ((performance.now() - startedAt) / 1000).toFixed(1);
-
-    if (!response.ok || !payload.ok) {
-      throw new Error(payload.error || `HTTP ${response.status}`);
-    }
-
-    updateLastAssistant({
-      text: `${t("generated")} ${payload.images.length} ${t("imagesUnit")}.`,
-      images: payload.images,
-      meta: [
-        `${elapsed}s`,
-        `${payload.prompt_chars} prompt chars`,
-        `${payload.documents.length} document(s)`,
-      ],
-    });
-
-    setLog(
-      [
-        `Finished in ${elapsed}s`,
-        `Prompt characters: ${payload.prompt_chars}`,
-        `Documents: ${payload.documents.length}`,
-        `Images: ${payload.images.length}`,
-      ].join("\n")
-    );
-    setStatus(t("done"), "done");
-    promptInput.value = "";
-    resetComposerFiles();
-  } catch (error) {
-    updateLastAssistant({
-      text: error.message,
-      meta: [t("failed")],
-    });
-    setStatus(t("error"), "error");
-    setLog(error.message);
-  } finally {
-    submitButton.disabled = false;
-  }
 });
 
 restoreSettings();

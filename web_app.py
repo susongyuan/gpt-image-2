@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 import tempfile
 import time
 from argparse import Namespace
@@ -17,6 +19,8 @@ load_dotenv(SCRIPT_DIR / ".env")
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
 SUPPORTED_DOCUMENT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".pdf", ".docx"}
 MAX_DOCUMENT_CHARS = 12000
+MAX_CONTEXT_CHARS = 6000
+MAX_CONTEXT_IMAGES = 4
 ALLOWED_QUALITIES = {"", "auto", "low", "medium", "high"}
 ALLOWED_FORMATS = {"", "png", "jpeg", "webp"}
 ALLOWED_BACKGROUNDS = {"", "auto", "opaque"}
@@ -109,8 +113,26 @@ def save_uploads(files, target_dir: Path) -> list[Path]:
     return saved
 
 
-def build_prompt(prompt: str, document_paths: list[Path]) -> tuple[str, list[dict]]:
-    prompt_parts = [prompt.strip()] if prompt.strip() else []
+def clipped_context(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+    return cleaned[:MAX_CONTEXT_CHARS]
+
+
+def build_prompt(prompt: str, document_paths: list[Path], conversation_context: str = "") -> tuple[str, list[dict]]:
+    prompt_parts = []
+    context = clipped_context(conversation_context)
+    if context:
+        prompt_parts.append(
+            "Conversation context from the current local chat. Use it only to understand references like "
+            "'the previous image', 'same style', or 'change it'. The current request below has priority.\n"
+            f"{context}"
+        )
+    if prompt.strip():
+        prompt_parts.append(f"Current request:\n{prompt.strip()}")
     document_summaries = []
     remaining = MAX_DOCUMENT_CHARS
 
@@ -134,6 +156,56 @@ def build_prompt(prompt: str, document_paths: list[Path]) -> tuple[str, list[dic
     if not combined:
         raise RuntimeError("Enter a prompt or upload at least one readable document.")
     return combined, document_summaries
+
+
+def output_path_from_url(value: str) -> Optional[Path]:
+    if not value:
+        return None
+    prefix = "/outputs/"
+    if value.startswith(prefix):
+        filename = value[len(prefix) :].split("?", 1)[0]
+    else:
+        filename = value.split("?", 1)[0]
+    if "/" in filename or "\\" in filename:
+        return None
+    candidate = (OUTPUT_DIR / filename).resolve()
+    output_root = OUTPUT_DIR.resolve()
+    try:
+        if os.path.commonpath([str(output_root), str(candidate)]) != str(output_root):
+            return None
+    except ValueError:
+        return None
+    if candidate.is_file() and candidate.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+        return candidate
+    return None
+
+
+def save_previous_images(raw_value: Optional[str], target_dir: Path) -> list[Path]:
+    if not raw_value:
+        return []
+    try:
+        values = json.loads(raw_value)
+    except json.JSONDecodeError:
+        values = []
+    if not isinstance(values, list):
+        values = []
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    saved = []
+    seen = set()
+    for index, value in enumerate(values, start=1):
+        if len(saved) >= MAX_CONTEXT_IMAGES or not isinstance(value, str):
+            continue
+        source = output_path_from_url(value)
+        if not source or source in seen:
+            continue
+        seen.add(source)
+        target = target_dir / f"context-{index}{source.suffix.lower()}"
+        while target.exists():
+            target = target_dir / f"{target.stem}-{index}{target.suffix}"
+        shutil.copy2(source, target)
+        saved.append(target)
+    return saved
 
 
 def blank_to_none(value: Optional[str]) -> Optional[str]:
@@ -162,7 +234,12 @@ def validated_choice(name: str, value: Optional[str], allowed: set[str]) -> Opti
     return value
 
 
-def build_generation_args(prompt: str, image_dir: Optional[Path]) -> Namespace:
+def build_generation_args(
+    prompt: str,
+    image_dir: Optional[Path],
+    *,
+    output_dir: Optional[Path] = None,
+) -> Namespace:
     form = request.form
     return Namespace(
         prompt=prompt,
@@ -176,17 +253,34 @@ def build_generation_args(prompt: str, image_dir: Optional[Path]) -> Namespace:
         background=validated_choice("Background", form.get("background"), ALLOWED_BACKGROUNDS),
         moderation=validated_choice("Moderation", form.get("moderation"), ALLOWED_MODERATIONS),
         n=parse_count(form.get("n")),
-        output_dir=str(OUTPUT_DIR),
+        output_dir=str(output_dir or OUTPUT_DIR),
         image=str(image_dir) if image_dir else None,
         no_proxy=form.get("no_proxy") == "on",
         verbose=False,
     )
 
 
+def copy_single_image_to_dir(source: Path, target_dir: Path) -> Path:
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / source.name
+    if target.exists():
+        target = target_dir / f"{source.stem}-1{source.suffix}"
+    shutil.copy2(source, target)
+    return target
+
+
 def image_dimensions(path: Path) -> tuple[Optional[int], Optional[int]]:
     try:
+        header = path.read_bytes()[:64]
+    except Exception:
+        header = b""
+
+    if header.startswith(b"\x89PNG\r\n\x1a\n") and len(header) >= 24:
+        return int.from_bytes(header[16:20], "big"), int.from_bytes(header[20:24], "big")
+
+    try:
         from PIL import Image
-    except ImportError:
+    except Exception:
         return None, None
 
     try:
@@ -194,6 +288,21 @@ def image_dimensions(path: Path) -> tuple[Optional[int], Optional[int]]:
             return image.width, image.height
     except Exception:
         return None, None
+
+
+def image_response(path: Path) -> dict:
+    width, height = image_dimensions(path)
+    try:
+        relative = path.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
+    except ValueError:
+        relative = path.name
+    return {
+        "filename": path.name,
+        "url": f"/outputs/{relative}",
+        "download_url": f"/outputs/{relative}?download=1",
+        "width": width,
+        "height": height,
+    }
 
 
 @app.get("/")
@@ -215,29 +324,44 @@ def generate():
             document_dir = temp_path / "documents"
 
             image_paths = save_uploads(request.files.getlist("images"), image_dir)
+            batch_per_image = request.form.get("batch_per_image") == "on" and len(image_paths) > 1
+            previous_image_paths = [] if batch_per_image else save_previous_images(request.form.get("previous_image_urls"), image_dir)
             document_paths = save_uploads(request.files.getlist("documents"), document_dir)
-            combined_prompt, document_summaries = build_prompt(request.form.get("prompt", ""), document_paths)
-            args = build_generation_args(combined_prompt, image_dir if image_paths else None)
+            combined_prompt, document_summaries = build_prompt(
+                request.form.get("prompt", ""),
+                document_paths,
+                request.form.get("conversation_context", ""),
+            )
+            paths = []
+            batch_items = []
 
-            paths = run_generation(args)
-            images = []
-            for path in paths:
-                width, height = image_dimensions(path)
-                images.append(
-                    {
-                        "filename": path.name,
-                        "url": f"/outputs/{path.name}",
-                        "download_url": f"/outputs/{path.name}?download=1",
-                        "width": width,
-                        "height": height,
-                    }
-                )
+            if batch_per_image:
+                batch_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{temp_path.name.rsplit('-', 1)[-1]}"
+                batch_output_dir = OUTPUT_DIR / f"batch-{batch_id}"
+                for index, image_path in enumerate(image_paths, start=1):
+                    item_dir = temp_path / "batch_images" / f"{index:03d}"
+                    copy_single_image_to_dir(image_path, item_dir)
+                    item_output_dir = batch_output_dir / f"{index:03d}-{image_path.stem[:40]}"
+                    args = build_generation_args(combined_prompt, item_dir, output_dir=item_output_dir)
+                    item_paths = run_generation(args)
+                    paths.extend(item_paths)
+                    batch_items.append({"source": image_path.name, "images": len(item_paths)})
+            else:
+                all_image_paths = image_paths + previous_image_paths
+                args = build_generation_args(combined_prompt, image_dir if all_image_paths else None)
+                paths = run_generation(args)
+
+            images = [image_response(path) for path in paths]
 
         return jsonify(
             {
                 "ok": True,
                 "images": images,
+                "batch": batch_per_image,
+                "batch_items": batch_items,
                 "documents": document_summaries,
+                "context_images": len(previous_image_paths),
+                "context_chars": len(clipped_context(request.form.get("conversation_context", ""))),
                 "prompt_chars": len(combined_prompt),
             }
         )

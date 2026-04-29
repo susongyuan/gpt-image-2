@@ -125,6 +125,7 @@ h2 {
 
 .primary-button,
 .send-button,
+.stop-button,
 .upload-button,
 .text-button {
   border: 0;
@@ -156,7 +157,20 @@ h2 {
   padding: 0 16px;
 }
 
-.send-button:disabled {
+.stop-button {
+  min-width: 82px;
+  border: 1px solid #e3b5b5;
+  background: #fff5f5;
+  color: #9f2d2d;
+  padding: 0 14px;
+}
+
+.stop-button:hover:not(:disabled) {
+  background: #ffe8e8;
+}
+
+.send-button:disabled,
+.stop-button:disabled {
   cursor: wait;
   opacity: 0.64;
 }
@@ -353,6 +367,43 @@ h2 {
 .message-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.message-edit-input {
+  width: min(760px, 100%);
+  min-height: 160px;
+  border-color: #b9d7c9;
+  background: #fff;
+}
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.message.user .message-actions {
+  justify-content: flex-end;
+}
+
+.message-action {
+  min-height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.message-action:hover {
+  background: var(--surface-soft);
+}
+
+.message-action-delete {
+  color: #9f2d2d;
 }
 
 .attachment-summary,
@@ -576,6 +627,12 @@ label {
 .check-row input {
   width: 16px;
   min-height: 16px;
+}
+
+.setting-help {
+  margin: -6px 0 12px 24px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .log-output {

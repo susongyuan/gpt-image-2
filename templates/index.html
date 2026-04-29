@@ -60,6 +60,7 @@
             </label>
             <button class="text-button" id="loadExample" type="button" data-i18n="example">Example</button>
             <button class="send-button" type="submit" data-i18n="generate">Generate</button>
+            <button class="stop-button" id="stopGeneration" type="button" data-i18n="stop" disabled>Stop</button>
           </div>
 
           <div class="file-list" id="imageList"></div>
@@ -161,6 +162,20 @@
           <input name="no_proxy" form="generateForm" type="checkbox" />
           <span data-i18n="disableProxy">Disable proxy</span>
         </label>
+        <label class="check-row">
+          <input name="use_context" form="generateForm" type="checkbox" checked />
+          <span data-i18n="useContext">Use chat context</span>
+        </label>
+        <p class="setting-help" data-i18n="contextHint">
+          Sends recent chat text and recent generated images from this conversation as reference context.
+        </p>
+        <label class="check-row">
+          <input name="batch_per_image" form="generateForm" type="checkbox" />
+          <span data-i18n="batchPerImage">Batch each uploaded image</span>
+        </label>
+        <p class="setting-help" data-i18n="batchHint">
+          When multiple images are uploaded, generate separately for each image instead of using all images as one reference set.
+        </p>
 
         <pre id="logOutput" class="log-output"></pre>
       </aside>

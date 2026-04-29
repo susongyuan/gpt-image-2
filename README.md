@@ -1,5 +1,7 @@
 # gpt-image-2 Image Generation CLI
 
+Current version: `v0.3.0`
+
 A small Python command-line tool for generating images with a GPT Image-compatible API.
 
 It supports:
@@ -83,6 +85,8 @@ The page supports:
 
 - Chat-style generation
 - Local conversation history
+- Message actions for copying, deleting, inline editing, and resending previous prompts
+- Stop button for canceling an in-progress browser request
 - Enter-to-send and Shift+Enter for new lines
 - Immediate composer clearing after submit
 - File picker, drag-and-drop, and Ctrl+V paste uploads
@@ -92,6 +96,7 @@ The page supports:
 - Open and download controls for every generated image
 - Prompt input
 - Reference image uploads
+- Batch generation for one output per uploaded reference image
 - Document uploads
 - Image + document uploads in the same request
 - Custom Base URL
@@ -111,9 +116,25 @@ Supported document formats:
 
 The browser sends the API key only to your local Flask server. The key is not written to the repository.
 
-Conversation history is stored in your browser with `localStorage`. It stores prompts, attachment file names, generated image URLs, and response metadata. It does not store your API key.
+Conversation history is stored in your browser with `localStorage`. It stores prompts, attachment file names, generated image URLs, and response metadata.
 
-Connection settings are preserved locally for convenience. The API key is kept in browser `sessionStorage`, so it remains available in the current browser tab after a request but is not saved into conversation history.
+The `Use chat context` option is enabled by default. When it is on, each request also sends a compact summary of the recent messages in the current conversation and up to four recent generated images from that same conversation as reference images. This makes follow-up prompts such as "make it blue" or "keep the same layout" work without manually uploading the previous result again. Start a new chat or turn this option off when you want a clean request.
+
+Enable `Batch each uploaded image` when you want product-image batches. For example, upload 10 different product photos, use a prompt such as "Create a clean ecommerce main image for each product on a white background", and the app will make 10 separate image-edit requests so each product is handled independently. If `Count` is greater than 1, each product produces that many outputs.
+
+Connection settings are preserved locally for convenience. The API key is kept in browser `localStorage`, so it remains available after reopening the page without being saved into conversation history.
+
+Uploaded images and documents used by new web-chat messages are stored in the browser's IndexedDB so `Resend` and inline `Save and send` can reuse the original attachments. Older history entries created before `v0.3.0` only contain attachment names and cannot recover the original uploaded file blobs.
+
+## Version History
+
+### v0.3.0
+
+- Added inline editing for previous user prompts with `Save and send`.
+- Added resend support that reuses locally saved image and document attachments.
+- Added copy/delete controls on history messages and a stop button for active requests.
+- Persisted the right-side API key locally after it is entered once.
+- Added chat-context and per-upload batch generation support in the web app.
 
 ## Local Smoke Tests
 
@@ -123,7 +144,7 @@ Run the offline smoke tests before publishing or modifying the web app:
 python -m unittest discover -s tests
 ```
 
-These tests do not call the image API. They check the homepage, parameter validation, image size detection, download headers, and upload filename handling.
+These tests do not call the image API. They check the homepage, parameter validation, image size detection, download headers, upload filename handling, local context handling, and batch request routing.
 
 ## Text-to-Image
 
